@@ -2,6 +2,8 @@
 
 DRIFT is a small static HTML/JavaScript point-and-click canvas game. It has no build step and runs directly from the repository files through a static web server.
 
+The game supports desktop and mobile browsers. The canvas scales to fit the viewport while preserving its original aspect ratio, and pointer/touch input is mapped back to the internal game coordinates.
+
 ## Run Locally
 
 From the repository root:
@@ -26,6 +28,12 @@ npm run serve
 
 This script only starts a static file server and does not install dependencies.
 
+## Fullscreen and Mobile
+
+Use the fullscreen button in the top-right corner of the game stage to enter or exit fullscreen. Browsers with the standard Fullscreen API use native fullscreen. Browsers without that support, including some iOS Safari versions, fall back to a CSS pseudo-fullscreen mode that expands the stage to the available viewport.
+
+Mobile portrait mode is supported, but landscape is more comfortable because the game uses a wide canvas.
+
 ## Deploy to Cloudflare Pages
 
 1. Push this repository to GitHub.
@@ -36,7 +44,7 @@ This script only starts a static file server and does not install dependencies.
 6. Deploy.
 7. Optional: add a custom domain through Cloudflare DNS.
 
-Cloudflare Pages root hosting is the recommended deployment path because the game is a plain static site and `index.html` is already at the repository root.
+Cloudflare Pages root hosting remains the recommended deployment path because the game is a plain static site and `index.html` is already at the repository root.
 
 ## Deploy to GitHub Pages
 

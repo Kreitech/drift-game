@@ -143,6 +143,52 @@ function resetRun(){
 }
 
 /* ============================================================
+   VIEWPORT + FULLSCREEN
+   ============================================================ */
+const stageEl=document.getElementById('stage');
+const fullscreenBtn=document.getElementById('fullscreen');
+function updateViewportVars(){
+  document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`);
+}
+function isFullscreen(){
+  return document.fullscreenElement===stageEl || document.body.classList.contains('pseudo-fullscreen');
+}
+function syncFullscreenButton(){
+  fullscreenBtn.classList.toggle('on', isFullscreen());
+}
+async function toggleFullscreen(){
+  if(isFullscreen()){
+    document.body.classList.remove('pseudo-fullscreen');
+    if(document.fullscreenElement) await document.exitFullscreen();
+    syncFullscreenButton();
+    updateViewportVars();
+    return;
+  }
+  if(stageEl.requestFullscreen){
+    try {
+      await stageEl.requestFullscreen();
+    } catch(e) {
+      document.body.classList.add('pseudo-fullscreen');
+    }
+  } else {
+    document.body.classList.add('pseudo-fullscreen');
+  }
+  syncFullscreenButton();
+  updateViewportVars();
+}
+updateViewportVars();
+window.addEventListener('resize',updateViewportVars);
+window.addEventListener('orientationchange',()=>setTimeout(updateViewportVars,250));
+if(window.visualViewport) window.visualViewport.addEventListener('resize',updateViewportVars);
+document.addEventListener('fullscreenchange',()=>{
+  if(document.fullscreenElement===stageEl) document.body.classList.remove('pseudo-fullscreen');
+  syncFullscreenButton();
+  updateViewportVars();
+});
+fullscreenBtn.addEventListener('pointerdown',e=>e.stopPropagation());
+fullscreenBtn.addEventListener('click',e=>{ e.stopPropagation(); toggleFullscreen(); });
+
+/* ============================================================
    INPUT
    ============================================================ */
 function activeCtl(){
@@ -167,34 +213,52 @@ function tryCatClick(x,y){
   burst(sc.ax-15,sc.ay-62,'rgba(255,180,210,A)',6,40);
   return true;
 }
-cv.addEventListener('mousemove',e=>{
-  const [x,y]=evPos(e); mouse.x=x; mouse.y=y; mouse.inside=true;
-});
-cv.addEventListener('mouseleave',()=>{ mouse.inside=false; mouse.down=false;
-  const c=activeCtl(); if(c.onUp) c.onUp(); });
-cv.addEventListener('mousedown',e=>{
+function pressAt(e, sourceEvent){
+  (sourceEvent||e).preventDefault();
   Au.ensure();
-  const [x,y]=evPos(e); mouse.x=x; mouse.y=y; mouse.down=true;
+  const [x,y]=evPos(e); mouse.x=x; mouse.y=y; mouse.inside=true;
+  mouse.down=true;
   ripples.push({x,y,r:5,life:1});
   GameState.idle=0;
   if(Trans.active) return;
   if(tryCatClick(x,y)) return;
   activeCtl().onClick(x,y);
-});
-window.addEventListener('mouseup',()=>{ mouse.down=false;
-  const c=activeCtl(); if(c.onUp) c.onUp(); });
-// touch support
-cv.addEventListener('touchstart',e=>{ e.preventDefault();
-  Au.ensure();
-  const [x,y]=evPos(e.touches[0]); mouse.x=x; mouse.y=y; mouse.inside=true; mouse.down=true;
-  ripples.push({x,y,r:5,life:1}); GameState.idle=0;
-  if(!Trans.active && !tryCatClick(x,y)) activeCtl().onClick(x,y);
-},{passive:false});
-cv.addEventListener('touchmove',e=>{ e.preventDefault();
-  const [x,y]=evPos(e.touches[0]); mouse.x=x; mouse.y=y;
-},{passive:false});
-cv.addEventListener('touchend',()=>{ mouse.down=false; mouse.inside=false;
-  const c=activeCtl(); if(c.onUp) c.onUp(); });
+}
+function moveAt(e){
+  const [x,y]=evPos(e); mouse.x=x; mouse.y=y; mouse.inside=true;
+}
+function releaseInput(){
+  mouse.down=false;
+  const c=activeCtl(); if(c.onUp) c.onUp();
+}
+if(window.PointerEvent){
+  let pointerId=null;
+  cv.addEventListener('pointerdown',e=>{
+    pointerId=e.pointerId;
+    if(cv.setPointerCapture) cv.setPointerCapture(pointerId);
+    pressAt(e);
+  });
+  cv.addEventListener('pointermove',e=>{
+    if(pointerId!==null && e.pointerId!==pointerId) return;
+    moveAt(e);
+  });
+  cv.addEventListener('pointerup',e=>{
+    if(pointerId!==null && e.pointerId!==pointerId) return;
+    if(cv.releasePointerCapture) cv.releasePointerCapture(e.pointerId);
+    pointerId=null; releaseInput();
+  });
+  cv.addEventListener('pointercancel',()=>{ pointerId=null; mouse.inside=false; releaseInput(); });
+  cv.addEventListener('pointerleave',()=>{ if(pointerId===null) mouse.inside=false; });
+} else {
+  cv.addEventListener('mousemove',moveAt);
+  cv.addEventListener('mouseleave',()=>{ mouse.inside=false; releaseInput(); });
+  cv.addEventListener('mousedown',pressAt);
+  window.addEventListener('mouseup',releaseInput);
+  cv.addEventListener('touchstart',e=>pressAt(e.touches[0],e),{passive:false});
+  cv.addEventListener('touchmove',e=>{ e.preventDefault(); moveAt(e.touches[0]); },{passive:false});
+  cv.addEventListener('touchend',()=>{ mouse.inside=false; releaseInput(); });
+}
+document.getElementById('mute').addEventListener('pointerdown',e=>e.stopPropagation());
 document.getElementById('mute').addEventListener('click',e=>{
   e.stopPropagation(); Au.ensure(); Au.toggleMute(); });
 
