@@ -1,0 +1,571 @@
+
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+canvas { display: block; cursor: default; }
+#game-container { position: relative; width: 680px; height: 480px; overflow: hidden; background: #0a0a1a; }
+#ui { position: absolute; bottom: 0; left: 0; width: 100%; height: 64px; background: rgba(10,10,26,0.85); display: flex; align-items: center; padding: 0 16px; gap: 8px; border-top: 0.5px solid rgba(255,255,255,0.1); }
+#inventory { display: flex; gap: 8px; flex: 1; }
+.inv-slot { width: 44px; height: 44px; border: 0.5px solid rgba(255,255,255,0.2); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer; background: rgba(255,255,255,0.05); transition: background 0.2s; }
+.inv-slot.selected { border-color: #7fd4a8; background: rgba(127,212,168,0.15); }
+.inv-slot.empty { opacity: 0.3; }
+#msg { color: rgba(255,255,255,0.7); font-size: 13px; font-family: var(--font-sans, sans-serif); min-width: 160px; text-align: right; line-height: 1.4; }
+#scene-label { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.4); font-size: 11px; font-family: var(--font-sans, sans-serif); letter-spacing: 2px; text-transform: uppercase; }
+</style>
+
+<h2 class="sr-only">Juego point-and-click: un astronauta perdido en un planeta orgánico debe resolver puzzles para escapar.</h2>
+
+<div id="game-container">
+  <canvas id="c" width="680" height="416"></canvas>
+  <div id="scene-label">escena 1 de 3</div>
+  <div id="ui">
+    <div id="inventory"></div>
+    <div id="msg">Explorá el entorno</div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 680, H = 416;
+
+const state = {
+  scene: 0,
+  inventory: [],
+  selectedItem: null,
+  puzzleStates: { watered: false, creatueAsleep: false, gearsPlaced: 0, powered: false },
+  hintTimer: 0,
+  fade: 1,
+  fadingTo: -1,
+  t: 0
+};
+
+const msg = document.getElementById('msg');
+const sceneLabel = document.getElementById('scene-label');
+
+function setMsg(txt) { msg.textContent = txt; }
+
+// ---- DRAWING HELPERS ----
+function drawSky(colors, stars) {
+  const grd = ctx.createLinearGradient(0,0,0,H);
+  colors.forEach(([stop,c]) => grd.addColorStop(stop, c));
+  ctx.fillStyle = grd;
+  ctx.fillRect(0,0,W,H);
+  if (stars) {
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    for (let i=0;i<80;i++) {
+      const sx = (i*137.5)%W, sy = (i*79.3)%160;
+      const s = Math.sin(state.t*0.5+i)*0.3+0.7;
+      ctx.globalAlpha = s*0.5;
+      ctx.fillRect(sx,sy,1.5,1.5);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawGround(y, color, bumps) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  ctx.lineTo(0, y);
+  if (bumps) {
+    for (let x=0;x<=W;x+=20) {
+      const by = y + Math.sin(x*0.04)*10 + Math.sin(x*0.11)*5;
+      ctx.lineTo(x, by);
+    }
+  } else {
+    ctx.lineTo(0, y); ctx.lineTo(W, y);
+  }
+  ctx.lineTo(W, H);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawMushroom(x, y, r, color, capColor, bob=0) {
+  const b = Math.sin(state.t*0.8+bob)*3;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(x, y+b, r*0.25, r*0.7, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = capColor;
+  ctx.beginPath();
+  ctx.ellipse(x, y-r*0.3+b, r, r*0.55, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(x-r*0.25, y-r*0.5+b, r*0.2, r*0.15, -0.5, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function drawTree(x, y, h, trunkC, leafC) {
+  ctx.fillStyle = trunkC;
+  ctx.fillRect(x-8, y-h, 16, h);
+  ctx.fillStyle = leafC;
+  ctx.beginPath();
+  ctx.ellipse(x, y-h-30, 40, 55, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(x-25, y-h+5, 28, 40, -0.3, 0, Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(x+25, y-h+5, 28, 40, 0.3, 0, Math.PI*2);
+  ctx.fill();
+}
+
+function drawAstronaut(x, y, size=1) {
+  const s = size, b = Math.sin(state.t)*1.5;
+  ctx.fillStyle = '#dde8f0';
+  ctx.beginPath(); ctx.ellipse(x, y-32*s+b, 11*s, 13*s, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#f0e8cc';
+  ctx.beginPath(); ctx.ellipse(x, y-32*s+b, 7*s, 8*s, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#dde8f0';
+  ctx.beginPath(); ctx.ellipse(x, y-18*s+b, 12*s, 14*s, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#c5d5e0';
+  ctx.beginPath(); ctx.moveTo(x-12*s, y-26*s+b); ctx.lineTo(x-20*s, y-12*s+b); ctx.lineTo(x-14*s, y-10*s+b); ctx.lineTo(x-8*s, y-20*s+b); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x+12*s, y-26*s+b); ctx.lineTo(x+20*s, y-12*s+b); ctx.lineTo(x+14*s, y-10*s+b); ctx.lineTo(x+8*s, y-20*s+b); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#c5d5e0';
+  ctx.beginPath(); ctx.moveTo(x-8*s, y-6*s+b); ctx.lineTo(x-10*s, y+8*s+b); ctx.lineTo(x-4*s, y+8*s+b); ctx.lineTo(x-2*s, y-4*s+b); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x+8*s, y-6*s+b); ctx.lineTo(x+10*s, y+8*s+b); ctx.lineTo(x+4*s, y+8*s+b); ctx.lineTo(x+2*s, y-4*s+b); ctx.closePath(); ctx.fill();
+}
+
+// ---- SCENE 0: jungle planet ----
+const hotspots0 = [];
+function buildHotspots0() {
+  hotspots0.length = 0;
+  hotspots0.push({ id:'bucket', x:120, y:330, w:30, h:26, label:'Un cubo oxidado', action: pickBucket });
+  hotspots0.push({ id:'pipe', x:560, y:270, w:20, h:60, label:'Agua gotea de un tubo', action: fillBucket });
+  hotspots0.push({ id:'flower', x:330, y:240, w:50, h:60, label:'Flor musical dormida', action: useOnFlower });
+  hotspots0.push({ id:'creature', x:340, y:310, w:80, h:60, label:'Criatura peluda bloquea el camino', action: tryCreature });
+  hotspots0.push({ id:'door', x:600, y:290, w:40, h:80, label:'Puerta hacia la siguiente escena', action: goScene1 });
+}
+
+function drawScene0() {
+  drawSky([[0,'#0d0d2b'],[0.6,'#1a1040'],[1,'#2d1a5a']], true);
+  drawGround(300, '#1a2e1a', true);
+  drawGround(340, '#0f1f0f', false);
+  drawTree(80, 340, 100, '#2a1a0a', '#1a3a1a');
+  drawTree(200, 340, 80, '#2a1a0a', '#193319');
+  drawTree(500, 340, 90, '#2a1a0a', '#1a3a20');
+  drawMushroom(150, 320, 28, '#5a3a1a', '#c04040', 0.2);
+  drawMushroom(430, 315, 20, '#3a3a1a', '#8040c0', 1.1);
+  drawMushroom(60, 330, 16, '#3a2a1a', '#d06020', 2.3);
+
+  // dripping pipe
+  ctx.fillStyle = '#5a6a5a';
+  ctx.fillRect(550, 210, 24, 80);
+  ctx.fillStyle = '#4a5a4a';
+  ctx.fillRect(545, 250, 34, 14);
+  const drip = (state.t*40)%40;
+  ctx.fillStyle = 'rgba(100,180,255,0.8)';
+  ctx.beginPath(); ctx.ellipse(562, 280+drip, 3, 4, 0, 0, Math.PI*2); ctx.fill();
+
+  // flower
+  const fBob = Math.sin(state.t*0.5)*4;
+  if (state.puzzleStates.watered) {
+    ctx.fillStyle = '#7fd4a8';
+    ctx.beginPath(); ctx.moveTo(330, 295); ctx.quadraticCurveTo(310, 260, 330, 240+fBob); ctx.quadraticCurveTo(350, 260, 330, 295); ctx.fill();
+    ctx.fillStyle = '#ffdd88';
+    ctx.beginPath(); ctx.ellipse(330, 240+fBob, 14, 14, 0, 0, Math.PI*2); ctx.fill();
+    // music notes
+    ctx.fillStyle = 'rgba(255,220,100,0.6)';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('♪', 350, 220+fBob+Math.sin(state.t*1.2)*5);
+    ctx.fillText('♫', 310, 225+fBob+Math.sin(state.t*1.5+1)*5);
+  } else {
+    ctx.fillStyle = '#3a5a3a';
+    ctx.beginPath(); ctx.moveTo(330, 295); ctx.quadraticCurveTo(310, 270, 325, 250+fBob); ctx.quadraticCurveTo(345, 270, 330, 295); ctx.fill();
+    ctx.fillStyle = '#4a3a4a';
+    ctx.beginPath(); ctx.ellipse(325, 250+fBob, 10, 10, 0, 0, Math.PI*2); ctx.fill();
+  }
+
+  // creature
+  if (!state.puzzleStates.creatueAsleep) {
+    const cb = Math.sin(state.t*1.2)*3;
+    ctx.fillStyle = '#a08060';
+    ctx.beginPath(); ctx.ellipse(340, 340+cb, 38, 24, 0.1, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#c0a080';
+    ctx.beginPath(); ctx.ellipse(360, 328+cb, 20, 16, -0.2, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.ellipse(368, 324+cb, 4, 4, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ffaaaa';
+    ctx.beginPath(); ctx.ellipse(370, 330+cb, 6, 4, 0.3, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#c0a080';
+    for (let i=0;i<6;i++) { ctx.beginPath(); ctx.moveTo(305+i*9, 348+cb); ctx.lineTo(302+i*9, 360+cb); ctx.lineWidth=3; ctx.strokeStyle='#a08060'; ctx.stroke(); }
+  } else {
+    ctx.fillStyle = '#7a6050';
+    ctx.beginPath(); ctx.ellipse(340, 360, 38, 14, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font='11px sans-serif'; ctx.fillText('z z z', 350, 348);
+  }
+
+  // bucket
+  if (!state.inventory.find(i=>i.id==='bucket') && !state.inventory.find(i=>i.id==='bucket_full')) {
+    ctx.fillStyle = '#8a7060';
+    ctx.beginPath(); ctx.moveTo(108,340); ctx.lineTo(112,356); ctx.lineTo(142,356); ctx.lineTo(146,340); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#6a5040'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(115,340); ctx.quadraticCurveTo(129,325,143,340); ctx.stroke();
+  }
+
+  // door (only opens when creature asleep)
+  ctx.fillStyle = state.puzzleStates.creatueAsleep ? '#3a6a3a' : '#2a3a2a';
+  ctx.fillRect(582, 270, 50, 100);
+  ctx.fillStyle = state.puzzleStates.creatueAsleep ? '#5aaa5a' : '#3a5a3a';
+  ctx.fillRect(586, 274, 42, 92);
+  if (state.puzzleStates.creatueAsleep) {
+    ctx.fillStyle = 'rgba(100,255,100,0.3)';
+    ctx.fillRect(586, 274, 42, 92);
+    ctx.fillStyle = '#7fd4a8'; ctx.font='11px sans-serif';
+    ctx.fillText('→', 600, 325);
+  }
+  ctx.fillStyle = '#5a7a5a';
+  ctx.beginPath(); ctx.arc(592, 320, 5, 0, Math.PI*2); ctx.fill();
+
+  drawAstronaut(250, 340);
+}
+
+function pickBucket() {
+  if (state.inventory.find(i=>i.id==='bucket') || state.inventory.find(i=>i.id==='bucket_full')) { setMsg('Ya lo tenés'); return; }
+  state.inventory.push({ id:'bucket', icon:'🪣', label:'Cubo vacío' });
+  setMsg('Tomaste el cubo oxidado'); updateInventory();
+}
+function fillBucket() {
+  if (!state.inventory.find(i=>i.id==='bucket')) { setMsg('Necesitás algo para llenar'); return; }
+  const idx = state.inventory.findIndex(i=>i.id==='bucket');
+  state.inventory[idx] = { id:'bucket_full', icon:'💧', label:'Cubo con agua' };
+  setMsg('Llenaste el cubo con agua'); updateInventory();
+}
+function useOnFlower() {
+  if (state.puzzleStates.watered) { setMsg('La flor ya está florecida'); return; }
+  if (state.selectedItem?.id === 'bucket_full') {
+    state.puzzleStates.watered = true;
+    const idx = state.inventory.findIndex(i=>i.id==='bucket_full');
+    state.inventory.splice(idx,1);
+    state.selectedItem = null;
+    setMsg('¡La flor florece y toca una melodía!'); updateInventory();
+    setTimeout(()=>{ state.puzzleStates.creatueAsleep=true; setMsg('La criatura se quedó dormida... el camino está libre'); },2000);
+  } else { setMsg('Quizás necesitás agua...'); }
+}
+function tryCreature() {
+  if (state.puzzleStates.creatueAsleep) { setMsg('Está dormida, podés pasar'); }
+  else { setMsg('La criatura gruñe. Bloqueás el camino'); }
+}
+function goScene1() {
+  if (!state.puzzleStates.creatueAsleep) { setMsg('La criatura bloquea el paso'); return; }
+  startFade(1);
+}
+
+// ---- SCENE 1: gear room ----
+const gears = [
+  {x:180,y:220,r:32,placed:false,slotX:360,slotY:200},
+  {x:520,y:180,r:26,placed:false,slotX:410,slotY:240},
+  {x:140,y:330,r:20,placed:false,slotX:380,slotY:270}
+];
+const GEAR_SLOTS = [{x:360,y:200,r:32},{x:410,y:240,r:26},{x:380,y:270,r:20}];
+
+function drawGear(x,y,r,col,teeth=8,rot=0) {
+  ctx.save(); ctx.translate(x,y); ctx.rotate(rot);
+  ctx.fillStyle=col;
+  for(let i=0;i<teeth;i++){
+    ctx.save(); ctx.rotate(i/teeth*Math.PI*2);
+    ctx.fillRect(-4,-r-8,8,10); ctx.restore();
+  }
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.arc(0,0,r*0.35,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawScene1() {
+  drawSky([[0,'#1a0a0a'],[0.5,'#3a1a1a'],[1,'#1a0a1a']], false);
+  ctx.fillStyle='#2a1a1a'; ctx.fillRect(0,280,W,H-280);
+  ctx.fillStyle='#1a0a0a'; ctx.fillRect(0,380,W,H-380);
+  // walls
+  ctx.fillStyle='#3a2a2a'; ctx.fillRect(0,60,30,H); ctx.fillRect(W-30,60,30,H);
+  ctx.fillStyle='#2a1a1a'; ctx.fillRect(30,280,W-60,20);
+
+  // slots (door mechanism)
+  const allPlaced = gears.every(g=>g.placed);
+  GEAR_SLOTS.forEach((s,i)=>{
+    const placed = gears[i].placed;
+    ctx.strokeStyle = placed ? '#7fd4a8' : 'rgba(255,255,255,0.2)';
+    ctx.lineWidth=2; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+    if (placed) drawGear(s.x,s.y,s.r,'#b08040',8,state.t*0.5*(i%2?1:-1));
+  });
+
+  // door
+  ctx.fillStyle = allPlaced ? '#3a6a3a' : '#3a2a2a';
+  ctx.fillRect(440,160,80,160);
+  ctx.fillStyle = allPlaced ? 'rgba(100,255,100,0.3)' : 'rgba(255,255,255,0.05)';
+  ctx.fillRect(444,164,72,152);
+  if (allPlaced) { ctx.fillStyle='#7fd4a8'; ctx.font='11px sans-serif'; ctx.fillText('→',470,245); }
+  ctx.fillStyle='#6a5a5a'; ctx.beginPath(); ctx.arc(448,242,5,0,Math.PI*2); ctx.fill();
+
+  // loose gears
+  gears.forEach((g,i)=>{
+    if (!g.placed) drawGear(g.x,g.y,g.r,'#c09040',8,state.t*0.3*(i%2?1:-1));
+  });
+
+  // pipe organ decoration
+  for (let i=0;i<6;i++) {
+    ctx.fillStyle=`hsl(${30+i*10},40%,${20+i*2}%)`;
+    ctx.fillRect(60+i*18, 80, 14, 150+i*10);
+  }
+
+  drawAstronaut(240, 330);
+}
+
+function clickScene1(mx,my) {
+  // check loose gears
+  for (let i=0;i<gears.length;i++) {
+    const g=gears[i];
+    if(!g.placed && Math.hypot(mx-g.x,my-g.y)<g.r+10){
+      g.placed=true;
+      state.puzzleStates.gearsPlaced++;
+      setMsg(`Engranaje ${state.puzzleStates.gearsPlaced}/3 colocado`);
+      if(gears.every(g2=>g2.placed)){ setTimeout(()=>setMsg('¡Mecanismo completo! La puerta se abre'),800); }
+      return;
+    }
+  }
+  const allPlaced=gears.every(g=>g.placed);
+  if(mx>440&&mx<520&&my>160&&my<320){ if(allPlaced){ startFade(2); } else { setMsg('Faltan engranajes en el mecanismo'); } return; }
+  setMsg('Colocá los engranajes en los círculos');
+}
+
+// ---- SCENE 2: tower ----
+let mirrorAngle = 0;
+let mirrorDragging = false;
+
+function drawScene2() {
+  drawSky([[0,'#050510'],[0.4,'#0a0a30'],[1,'#0a1530']], true);
+  drawGround(320, '#0a2010', true);
+  drawGround(360, '#061506', false);
+
+  // sun
+  const sunX=80, sunY=80;
+  ctx.fillStyle='#ffee88';
+  ctx.beginPath(); ctx.arc(sunX,sunY,20,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(255,238,136,0.4)'; ctx.lineWidth=2;
+  for(let a=0;a<8;a++){
+    const ax=Math.cos(a/8*Math.PI*2), ay=Math.sin(a/8*Math.PI*2);
+    ctx.beginPath(); ctx.moveTo(sunX+ax*22,sunY+ay*22); ctx.lineTo(sunX+ax*32,sunY+ay*32); ctx.stroke();
+  }
+
+  // solar panel
+  ctx.fillStyle='#2a3a5a';
+  ctx.fillRect(530,180,80,50);
+  ctx.fillStyle='#1a2a4a';
+  for(let r=0;r<3;r++) for(let c=0;c<4;c++){
+    ctx.strokeStyle='rgba(100,150,255,0.3)'; ctx.lineWidth=0.5;
+    ctx.strokeRect(532+c*19,182+r*15,18,14);
+  }
+  // glow if powered
+  if(state.puzzleStates.powered){
+    ctx.fillStyle='rgba(100,200,255,0.3)';
+    ctx.fillRect(530,180,80,50);
+  }
+
+  // tower
+  const tw=60, th=200;
+  const tx=570, ty=320;
+  ctx.fillStyle='#3a3a3a';
+  ctx.beginPath(); ctx.moveTo(tx-tw/2,ty); ctx.lineTo(tx-tw/4,ty-th); ctx.lineTo(tx+tw/4,ty-th); ctx.lineTo(tx+tw/2,ty); ctx.closePath(); ctx.fill();
+  for(let i=0;i<6;i++){ ctx.fillStyle=`rgba(255,255,255,0.05)`; ctx.fillRect(tx-tw/2+4+i*8,ty-th+10,6,th); }
+  // antenna
+  ctx.strokeStyle='#5a5a5a'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(tx,ty-th); ctx.lineTo(tx,ty-th-40); ctx.stroke();
+  if(state.puzzleStates.powered){
+    ctx.fillStyle='rgba(255,100,100,'+(0.5+Math.sin(state.t*3)*0.5)+')';
+    ctx.beginPath(); ctx.arc(tx,ty-th-40,8,0,Math.PI*2); ctx.fill();
+  }
+
+  // mirror
+  const mx2=280, my2=280;
+  ctx.save(); ctx.translate(mx2,my2); ctx.rotate(mirrorAngle);
+  ctx.fillStyle='#8888aa';
+  ctx.fillRect(-5,-25,10,50);
+  ctx.fillStyle='rgba(180,220,255,0.7)';
+  ctx.fillRect(-4,-24,8,48);
+  ctx.restore();
+
+  // light ray
+  if(state.puzzleStates.powered===false) {
+    const angle = mirrorAngle;
+    const rayFromSun = Math.atan2(my2-sunY, mx2-sunX);
+    const reflectAngle = 2*angle - rayFromSun + Math.PI;
+    const endX = mx2+Math.cos(reflectAngle)*400;
+    const endY = my2+Math.sin(reflectAngle)*400;
+    ctx.strokeStyle='rgba(255,238,100,0.3)'; ctx.lineWidth=2;
+    ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(sunX,sunY); ctx.lineTo(mx2,my2); ctx.stroke();
+    ctx.strokeStyle='rgba(255,238,100,0.5)'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(mx2,my2); ctx.lineTo(endX,endY); ctx.stroke();
+    ctx.setLineDash([]);
+    // check if ray hits panel
+    const panelX=570, panelY=205;
+    const dx=endX-mx2, dy=endY-my2;
+    const t2=((panelX-mx2)*dx+(panelY-my2)*dy)/(dx*dx+dy*dy);
+    const cx2=mx2+t2*dx, cy2=my2+t2*dy;
+    if(t2>0 && Math.abs(cx2-panelX)<45 && Math.abs(cy2-panelY)<30 && !state.puzzleStates.powered){
+      state.puzzleStates.powered=true;
+      setMsg('¡El panel solar se activa! La torre transmite la señal 📡');
+    }
+  }
+
+  drawAstronaut(180, 340);
+  if(!state.inventory.find(i=>i.id==='mirror_found') && !state.puzzleStates.powered) {
+    ctx.fillStyle='#8888aa'; ctx.fillRect(90,340,14,28);
+    ctx.fillStyle='rgba(180,220,255,0.7)'; ctx.fillRect(91,341,12,26);
+  }
+  if(state.puzzleStates.powered){
+    ctx.fillStyle='rgba(100,200,255,0.15)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='rgba(255,255,255,0.7)'; ctx.font='500 14px sans-serif';
+    ctx.textAlign='center';
+    ctx.fillText('Señal enviada. ¡Rescate en camino!', W/2, 60);
+    ctx.textAlign='left';
+  }
+}
+
+function clickScene2(mx,my) {
+  if(Math.hypot(mx-90,my-354)<20 && !state.inventory.find(i=>i.id==='mirror_found') && !state.puzzleStates.powered){
+    state.inventory.push({id:'mirror_found',icon:'🪞',label:'Espejo'}); updateInventory();
+    setMsg('Encontraste un espejo'); return;
+  }
+  if(Math.abs(mx-280)<30 && Math.abs(my-280)<40){
+    mirrorDragging=true; setMsg('Arrastrá para girar el espejo');
+  }
+}
+
+// ---- FADE / SCENE TRANSITIONS ----
+function startFade(to) {
+  state.fadingTo = to;
+}
+
+// ---- INVENTORY UI ----
+function updateInventory() {
+  const inv = document.getElementById('inventory');
+  inv.innerHTML = '';
+  for(let i=0;i<5;i++){
+    const slot=document.createElement('div');
+    slot.className='inv-slot'+(state.inventory[i]?'':' empty');
+    if(state.inventory[i]){
+      slot.textContent=state.inventory[i].icon;
+      slot.title=state.inventory[i].label;
+      slot.onclick=()=>{
+        if(state.selectedItem?.id===state.inventory[i].id){ state.selectedItem=null; slot.classList.remove('selected'); setMsg('Item deseleccionado'); }
+        else { state.selectedItem=state.inventory[i]; document.querySelectorAll('.inv-slot').forEach(s=>s.classList.remove('selected')); slot.classList.add('selected'); setMsg('Seleccionado: '+state.inventory[i].label); }
+      };
+      if(state.selectedItem?.id===state.inventory[i].id) slot.classList.add('selected');
+    }
+    inv.appendChild(slot);
+  }
+}
+
+// ---- HINT SYSTEM ----
+let hintPulse = 0;
+function drawHint(x,y) {
+  hintPulse = (hintPulse+0.05)%1;
+  const r = 16+hintPulse*8;
+  ctx.fillStyle=`rgba(127,212,168,${0.4*(1-hintPulse)})`;
+  ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+}
+
+// ---- MAIN LOOP ----
+function drawScenes() {
+  ctx.clearRect(0,0,W,H);
+  if(state.scene===0) drawScene0();
+  else if(state.scene===1) drawScene1();
+  else if(state.scene===2) drawScene2();
+
+  // hint: show after 8s of inactivity
+  state.hintTimer++;
+  if(state.hintTimer>480){
+    if(state.scene===0){
+      if(!state.inventory.find(i=>i.id==='bucket')&&!state.inventory.find(i=>i.id==='bucket_full')) drawHint(129,343);
+      else if(state.inventory.find(i=>i.id==='bucket')) drawHint(562,280);
+      else if(!state.puzzleStates.watered) drawHint(330,250);
+    } else if(state.scene===1){
+      const g=gears.find(g2=>!g2.placed); if(g) drawHint(g.x,g.y);
+    } else if(state.scene===2){
+      if(!state.inventory.find(i=>i.id==='mirror_found')&&!state.puzzleStates.powered) drawHint(90,354);
+      else drawHint(280,280);
+    }
+  }
+}
+
+function loop() {
+  state.t += 0.016;
+
+  // fade
+  if(state.fadingTo>=0){
+    state.fade = Math.min(state.fade+0.04, 1);
+    if(state.fade>=1){
+      state.scene=state.fadingTo;
+      state.fadingTo=-1;
+      sceneLabel.textContent=`escena ${state.scene+1} de 3`;
+      state.hintTimer=0;
+      if(state.scene===1){ gears.forEach(g=>g.placed=false); state.puzzleStates.gearsPlaced=0; }
+      setTimeout(()=>{ state.fade=0; },100);
+    }
+  } else {
+    state.fade = Math.max(state.fade-0.04, 0);
+  }
+
+  drawScenes();
+
+  if(state.fade>0){
+    ctx.fillStyle=`rgba(0,0,0,${state.fade})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+// ---- CLICK HANDLER ----
+canvas.addEventListener('click', e=>{
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  state.hintTimer=0;
+
+  if(state.fade>0.3) return;
+
+  if(state.scene===0){
+    for(const h of hotspots0){
+      if(mx>=h.x-h.w/2&&mx<=h.x+h.w/2&&my>=h.y-h.h/2&&my<=h.y+h.h/2){
+        h.action(); return;
+      }
+    }
+    setMsg('Inspeccionás el entorno...');
+  } else if(state.scene===1){
+    clickScene1(mx,my);
+  } else if(state.scene===2){
+    clickScene2(mx,my);
+  }
+});
+
+canvas.addEventListener('mousemove', e=>{
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+  canvas.style.cursor='default';
+  if(state.scene===0){
+    for(const h of hotspots0){
+      if(mx>=h.x-h.w/2&&mx<=h.x+h.w/2&&my>=h.y-h.h/2&&my<=h.y+h.h/2){ canvas.style.cursor='pointer'; setMsg(h.label); return; }
+    }
+  } else if(state.scene===1){
+    for(const g of gears){ if(!g.placed&&Math.hypot(mx-g.x,my-g.y)<g.r+10){ canvas.style.cursor='grab'; return; } }
+    if(mx>440&&mx<520&&my>160&&my<320){ canvas.style.cursor='pointer'; }
+  } else if(state.scene===2){
+    if(Math.abs(mx-280)<30&&Math.abs(my-280)<40){ canvas.style.cursor='ew-resize'; }
+    if(Math.abs(mx-90)<20&&Math.abs(my-354)<20) canvas.style.cursor='pointer';
+    if(mirrorDragging){
+      mirrorAngle=Math.atan2(my-280,mx-280);
+    }
+  }
+});
+
+canvas.addEventListener('mouseup',()=>{ mirrorDragging=false; });
+
+buildHotspots0();
+updateInventory();
+loop();
+</script>

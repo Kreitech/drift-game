@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>D R I F T · a wordless adventure</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html,body{margin:0;padding:0;height:100%;background:radial-gradient(ellipse at 50% 120%,#10101f 0%,#05050c 70%);display:flex;align-items:center;justify-content:center;overflow:hidden;font-family:sans-serif}
+  #stage{position:relative}
+  canvas#c{display:block;max-width:min(96vw,960px);height:auto;border-radius:12px;box-shadow:0 40px 100px rgba(0,0,0,.8),0 0 0 1px rgba(255,255,255,.06);cursor:none}
+  #inv{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;display:flex;gap:12px}
+  .slot{width:54px;height:54px;border-radius:48% 52% 55% 45%/52% 46% 54% 48%;background:rgba(10,14,22,.55);border:1px solid rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .3s cubic-bezier(.34,1.56,.64,1),box-shadow .3s,border-color .3s;backdrop-filter:blur(5px)}
+  .slot:hover{transform:translateY(-5px) rotate(-3deg)}
+  .slot.sel{border-color:#a9f0c8;box-shadow:0 0 22px rgba(140,230,180,.45),inset 0 0 12px rgba(140,230,180,.25)}
+  .slot.empty{opacity:.22;pointer-events:none}
+  .slot canvas{width:42px;height:42px}
+  #mute{position:absolute;top:14px;right:16px;width:36px;height:36px;border-radius:50%;background:rgba(10,14,22,.5);border:1px solid rgba(255,255,255,.14);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:opacity .3s}
+  #mute svg{opacity:.7}
+  #mute.off svg .wav{opacity:0}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="c" width="960" height="600"></canvas>
+  <div id="inv"></div>
+  <button id="mute" title=""><svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 6h3l4-3.5v11L5 10H2z" fill="#cfe3d8"/><path class="wav" d="M11 5q2 3 0 6M13 3.5q3 4.5 0 9" stroke="#cfe3d8" fill="none" stroke-width="1.3" stroke-linecap="round"/></svg></button>
+</div>
+<script src="js/core.js"></script>
+<script src="js/paint.js"></script>
+<script src="js/scenes_a.js"></script>
+<script src="js/scenes_b.js"></script>
+<script src="js/meta.js"></script>
+<script src="js/star.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
